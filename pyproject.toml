@@ -1,0 +1,25 @@
+[project]
+name = "local-disc-cleaner"
+version = "0.1.0"
+description = "Linux disk usage checker with GUI (files, Docker, Nix) and delete recommendations"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+disc-cleaner = "disc_cleaner.gui:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.9"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "disc_cleaner"
+
+[tool.uv]
+# uv 管理の python-build-standalone 版 Tk は X11 環境で xcb assertion によりクラッシュするため、
+# システムの Python (python3-tk) を使う
+python-preference = "only-system"
