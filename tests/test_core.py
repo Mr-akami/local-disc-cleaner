@@ -99,3 +99,16 @@ def test_list_dir_inner_score(tmp_path):
     cands = scanner.candidates(res, home=str(tmp_path))
     [proj] = scanner.list_dir(str(tmp_path), res, home=str(tmp_path), cands=cands)
     assert proj.score == cands[0].score > 0 and "削除候補 1 件" in proj.reason
+
+
+def test_breakdown_accounts_for_used(tmp_path, monkeypatch):
+    from disc_cleaner import breakdown
+
+    monkeypatch.setattr(breakdown, "docker_usage", lambda: None)
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "f").write_bytes(os.urandom(1 << 20))
+    (tmp_path / "top.bin").write_bytes(os.urandom(1 << 20))
+    used = 10 << 20
+    items = breakdown.breakdown(str(tmp_path), used, {}, threading.Event())
+    assert sum(i.size for i in items) == used
+    assert items[-1].kind == "other" and items[-1].size < used

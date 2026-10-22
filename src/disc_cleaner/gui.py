@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
-from . import docker_backend, nix_backend, scanner
+from . import breakdown, docker_backend, nix_backend, scanner
 from .disks import disks
 from .model import SAFETY_LABEL, Item
 from .util import human
@@ -132,6 +132,8 @@ class App(tk.Tk):
         self.docker_items: list[Item] = []
         self.nix_items: list[Item] = []
         self.busy = 0
+        self.breakdown_cancel = threading.Event()
+        self.breakdown_done = False
 
         style = ttk.Style(self)
         if "clam" in style.theme_names():
@@ -145,6 +147,7 @@ class App(tk.Tk):
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True, padx=8, pady=4)
         self._build_recommend_tab()
+        self._build_breakdown_tab()
         self._build_files_tab()
         self._build_docker_tab()
         self._build_nix_tab()
@@ -247,6 +250,57 @@ class App(tk.Tk):
         self.refresh_docker()
         self.refresh_nix()
 
+    # ---------- breakdown ----------
+    def _build_breakdown_tab(self) -> None:
+        tab = ttk.Frame(self.nb)
+        self.nb.add(tab, text="内訳")
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x", pady=4)
+        ttk.Label(bar, text="マウント:").pack(side="left")
+        mounts = [d.mount for d in disks()]
+        self.bd_mount = tk.StringVar(value="/" if "/" in mounts else (mounts[0] if mounts else "/"))
+        ttk.Combobox(bar, textvariable=self.bd_mount, values=mounts, state="readonly", width=20).pack(side="left", padx=4)
+        ttk.Button(bar, text="計測", command=self.run_breakdown).pack(side="left", padx=6)
+        ttk.Button(bar, text="中止", command=lambda: self.breakdown_cancel.set()).pack(side="left")
+        ttk.Label(bar, text="ダブルクリックでファイルタブを開いてスキャン").pack(side="right")
+        self.bd_info = tk.StringVar(value="ホームのスキャン完了後に自動計測します")
+        ttk.Label(tab, textvariable=self.bd_info, font=("TkDefaultFont", 11, "bold")).pack(fill="x", pady=(0, 4))
+        self.bd_table = ItemTable(tab, ["size", "pct", "name", "reason"], on_open=self.open_breakdown_item)
+        self.bd_table.sort_col = "size"
+        self.bd_table.pack(fill="both", expand=True)
+
+    def run_breakdown(self) -> None:
+        mount = self.bd_mount.get()
+        disk = next((d for d in disks() if d.mount == mount), None)
+        if not disk:
+            return
+        self.breakdown_done = True
+        self.breakdown_cancel.set()
+        cancel = self.breakdown_cancel = threading.Event()
+        known = self.scan_result.dir_sizes if self.scan_result else {}
+
+        def done(items):
+            if cancel is not self.breakdown_cancel or not items:
+                return
+            self.bd_table.set_items(items, total=disk.used)
+            other = items[-1].size or 0
+            self.bd_info.set(
+                f"{mount}  使用 {human(disk.used)}  =  計測済み {human(disk.used - other)}"
+                f"  +  未計測 {human(other)}   (各タブは一部しか表示しない: "
+                f"ファイル=スキャン範囲 / Nix=GC対象のみ / Docker=固有サイズのみ)"
+            )
+            self.status.set(f"内訳計測完了: {mount}")
+
+        self.bg(f"内訳を計測中: {mount}",
+                lambda: breakdown.breakdown(mount, disk.used, known, cancel, self.set_status), done)
+
+    def open_breakdown_item(self, it: Item) -> None:
+        if it.kind == "dir":
+            self.nb.select(2)
+            self.start_scan(it.key)
+        elif it.kind == "docker":
+            self.nb.select(3)
+
     # ---------- files ----------
     def _build_files_tab(self) -> None:
         tab = ttk.Frame(self.nb)
@@ -327,6 +381,8 @@ class App(tk.Tk):
             self.scan_result, self.file_cands = res, cands
             self.open_dir(self.cwd)
             self.update_recommend()
+            if not self.breakdown_done:
+                self.run_breakdown()
 
         self.bg(f"スキャン中: {root}", work, done)
 
